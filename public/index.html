@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Wiki - 基于OpenClaude的知识库</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-book"></i> LLM Wiki</h1>
+            <p class="subtitle">基于OpenClaude SDK的持久知识库系统</p>
+        </header>
+
+        <div class="app">
+            <!-- 左侧：控制面板 -->
+            <div class="sidebar">
+                <div class="card">
+                    <h2><i class="fas fa-cog"></i> Wiki设置</h2>
+                    <div class="wiki-root">
+                        <label for="wikiRoot">Wiki根目录:</label>
+                        <div class="path-display" id="currentRoot">/root/LLM_Wiki/llm-wiki-app/wiki-data</div>
+                        <div class="path-controls">
+                            <input type="text" id="wikiRootInput" placeholder="输入wiki根目录路径">
+                            <button id="setRootBtn"><i class="fas fa-folder-open"></i> 设置目录</button>
+                        </div>
+                    </div>
+
+                    <div class="api-config" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+                        <h3><i class="fas fa-key"></i> API配置</h3>
+                        <div class="config-form">
+                            <div class="form-group">
+                                <label for="apiKey">API密钥:</label>
+                                <input type="password" id="apiKey" placeholder="输入Anthropic API密钥" style="width: 100%;">
+                            </div>
+                            <div class="form-group">
+                                <label for="baseUrl">基础URL:</label>
+                                <input type="text" id="baseUrl" placeholder="https://api.anthropic.com" style="width: 100%;">
+                            </div>
+                            <div class="form-group">
+                                <label for="model">模型:</label>
+                                <input type="text" id="model" placeholder="claude-3-5-sonnet-20241022" style="width: 100%;">
+                            </div>
+                            <div class="config-buttons">
+                                <button id="loadConfigBtn" class="btn-secondary" style="margin-right: 10px;">
+                                    <i class="fas fa-download"></i> 加载配置
+                                </button>
+                                <button id="saveConfigBtn" class="btn-primary">
+                                    <i class="fas fa-save"></i> 保存配置
+                                </button>
+                            </div>
+                            <div id="configStatus" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2><i class="fas fa-tachometer-alt"></i> 系统状态</h2>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <span class="status-label">源文件:</span>
+                            <span class="status-value" id="statusRawFiles">0</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Wiki页面:</span>
+                            <span class="status-value" id="statusWikiPages">0</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">日志条目:</span>
+                            <span class="status-value" id="statusLogEntries">0</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">索引大小:</span>
+                            <span class="status-value" id="statusIndexSize">0</span>
+                        </div>
+                    </div>
+                    <button id="refreshStatusBtn" class="btn-secondary"><i class="fas fa-sync-alt"></i> 刷新状态</button>
+                </div>
+
+                <div class="card">
+                    <h2><i class="fas fa-file-import"></i> 文件浏览器</h2>
+                    <div class="file-browser">
+                        <div class="browser-controls">
+                            <input type="text" id="browserPath" placeholder="目录路径" value="/root/LLM_Wiki/llm-wiki-app/wiki-data">
+                            <button id="browseBtn"><i class="fas fa-search"></i> 浏览</button>
+                        </div>
+                        <div class="browser-content">
+                            <div class="directories" id="directoriesList">
+                                <!-- 目录列表 -->
+                            </div>
+                            <div class="files" id="filesList">
+                                <!-- 文件列表 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：主内容区 -->
+            <div class="main-content">
+                <!-- 操作选项卡 -->
+                <div class="tabs">
+                    <button class="tab active" data-tab="ingest"><i class="fas fa-file-import"></i> Ingest</button>
+                    <button class="tab" data-tab="query"><i class="fas fa-search"></i> Query</button>
+                    <button class="tab" data-tab="lint"><i class="fas fa-stethoscope"></i> Lint</button>
+                    <button class="tab" data-tab="logs"><i class="fas fa-history"></i> 日志</button>
+                </div>
+
+                <!-- Ingest选项卡 -->
+                <div class="tab-content active" id="ingest-tab">
+                    <div class="card">
+                        <h2><i class="fas fa-file-import"></i> 处理源文件 (Ingest)</h2>
+                        <p class="description">选择本地文件添加到wiki。LLM将读取文件内容，更新wiki页面、索引和日志。</p>
+
+                        <div class="ingest-controls">
+                            <div class="file-selection">
+                                <label for="filePath">文件路径:</label>
+                                <input type="text" id="filePath" placeholder="输入完整文件路径">
+                                <button id="browseFileBtn"><i class="fas fa-folder-open"></i> 浏览文件</button>
+                            </div>
+
+                            <div class="file-preview">
+                                <h3>文件预览:</h3>
+                                <pre id="filePreview">选择文件后显示预览...</pre>
+                            </div>
+
+                            <button id="ingestBtn" class="btn-primary">
+                                <i class="fas fa-play"></i> 开始Ingest处理
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Query选项卡 -->
+                <div class="tab-content" id="query-tab">
+                    <div class="card">
+                        <h2><i class="fas fa-search"></i> 查询Wiki (Query)</h2>
+                        <p class="description">向LLM Wiki提出自然语言问题。LLM将搜索相关wiki页面并生成答案。</p>
+
+                        <div class="query-controls">
+                            <textarea id="questionInput" placeholder="输入你的问题，例如：'什么是LLM Wiki？' 或 '总结wiki的主要内容'"></textarea>
+                            <button id="queryBtn" class="btn-primary">
+                                <i class="fas fa-question-circle"></i> 提交查询
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lint选项卡 -->
+                <div class="tab-content" id="lint-tab">
+                    <div class="card">
+                        <h2><i class="fas fa-stethoscope"></i> Wiki健康检查 (Lint)</h2>
+                        <p class="description">检查wiki的健康状况，发现一致性、过时信息、孤立页面等问题。</p>
+
+                        <button id="lintBtn" class="btn-primary">
+                            <i class="fas fa-check-circle"></i> 执行Lint检查
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 日志选项卡 -->
+                <div class="tab-content" id="logs-tab">
+                    <div class="card">
+                        <h2><i class="fas fa-history"></i> 操作日志</h2>
+                        <p class="description">查看wiki的操作历史记录。</p>
+
+                        <div class="log-viewer">
+                            <pre id="logContent">加载中...</pre>
+                        </div>
+                        <button id="refreshLogBtn" class="btn-secondary">
+                            <i class="fas fa-sync-alt"></i> 刷新日志
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 实时消息流 -->
+                <div class="messages-section" style="margin-bottom: 20px;">
+                    <div class="card">
+                        <h2><i class="fas fa-stream"></i> 实时消息流</h2>
+                        <div class="messages-controls">
+                            <button id="clearMessagesBtn" class="btn-secondary btn-small">
+                                <i class="fas fa-trash"></i> 清空消息
+                            </button>
+                            <button id="toggleMessagesBtn" class="btn-secondary btn-small">
+                                <i class="fas fa-eye"></i> 显示/隐藏
+                            </button>
+                            <span class="message-counter" id="messageCounter">消息: 0</span>
+                        </div>
+                        <div class="messages-content" id="messagesContainer">
+                            <div class="message-placeholder" id="messagesPlaceholder">
+                                <p><i class="fas fa-info-circle"></i> 执行操作时，智能体的实时消息将显示在这里。</p>
+                                <p class="subtext">包括：工具调用、执行进度、Token消耗、权限请求等</p>
+                            </div>
+                            <div class="messages-list" id="messagesList" style="display: none;">
+                                <!-- 消息将动态插入到这里 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 结果显示区 -->
+                <div class="results-section">
+                    <div class="card">
+                        <h2><i class="fas fa-poll"></i> 操作结果</h2>
+                        <div class="result-header">
+                            <span id="resultTitle">等待操作...</span>
+                            <span class="cost-badge" id="costBadge" style="display: none;">成本: $0.00</span>
+                        </div>
+                        <div class="result-content">
+                            <div id="resultOutput">
+                                <p class="placeholder">执行操作后，结果将显示在这里。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>LLM Wiki - 基于OpenClaude SDK | 本系统使用OpenClaude SDK与LLM交互</p>
+            <p class="server-status">服务器状态: <span id="serverStatus">正在连接...</span></p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
