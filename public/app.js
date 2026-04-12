@@ -115,9 +115,21 @@ class LLMWikiApp {
                 const processedMsg = this.processSDKMessage(message.message);
 
                 if (processedMsg.type === 'tool_progress') {
-                    // 工具调用进度：更新最近的助手消息
-                    if (this.lastAssistantMessageId) {
-                        this.addToolProgressToMessage(this.lastAssistantMessageId, processedMsg.metadata);
+                    // 工具调用进度：根据tool_use_id找到对应的助手消息
+                    const toolUseId = processedMsg.metadata.toolUseId;
+                    let targetMessageId = null;
+
+                    if (toolUseId && this.toolUseToMessageMap.has(toolUseId)) {
+                        // 找到映射的消息ID
+                        targetMessageId = this.toolUseToMessageMap.get(toolUseId);
+                    } else if (this.lastAssistantMessageId) {
+                        // 回退到最近的助手消息
+                        targetMessageId = this.lastAssistantMessageId;
+                        console.warn(`未找到工具调用ID ${toolUseId} 的映射，使用最近助手消息 ${targetMessageId}`);
+                    }
+
+                    if (targetMessageId) {
+                        this.addToolProgressToMessage(targetMessageId, processedMsg.metadata);
                     } else {
                         // 如果没有助手消息，创建新的系统消息显示工具进度
                         this.addMessage('system', processedMsg.content, processedMsg.metadata, 'internal');
@@ -210,16 +222,18 @@ class LLMWikiApp {
 
         switch (sdkMsg.type) {
             case 'assistant':
+                const assistantContent = sdkMsg.message?.content;
                 return {
                     ...baseMessage,
                     type: 'assistant',
                     category: 'final',
-                    content: this.extractAssistantContent(sdkMsg.message?.content),
+                    content: this.extractAssistantContent(assistantContent),
                     metadata: {
                         tokens: sdkMsg.message?.usage ? {
                             input: sdkMsg.message.usage.input_tokens,
                             output: sdkMsg.message.usage.output_tokens
-                        } : undefined
+                        } : undefined,
+                        toolUseIds: this.extractToolUseIdsFromAssistantContent(assistantContent)
                     }
                 };
 
@@ -349,6 +363,21 @@ class LLMWikiApp {
         return JSON.stringify(content);
     }
 
+    // 从助手内容中提取工具调用ID
+    extractToolUseIdsFromAssistantContent(content) {
+        const toolUseIds = [];
+        if (!content) return toolUseIds;
+        if (typeof content === 'string') return toolUseIds;
+        if (Array.isArray(content)) {
+            content.forEach(item => {
+                if (item.type === 'tool_use' && item.id) {
+                    toolUseIds.push(item.id);
+                }
+            });
+        }
+        return toolUseIds;
+    }
+
 
 
 
@@ -458,6 +487,15 @@ class LLMWikiApp {
         // 更新助手消息跟踪
         if (type === 'assistant') {
             this.lastAssistantMessageId = messageId;
+
+            // 建立工具调用ID到消息ID的映射
+            if (metadata.toolUseIds && Array.isArray(metadata.toolUseIds)) {
+                metadata.toolUseIds.forEach(toolUseId => {
+                    if (toolUseId) {
+                        this.toolUseToMessageMap.set(toolUseId, messageId);
+                    }
+                });
+            }
         }
 
         this.renderMessage(message);
@@ -684,6 +722,8 @@ class LLMWikiApp {
     clearMessages() {
         this.messages = [];
         this.messageCount = 0;
+        this.toolUseToMessageMap.clear();
+        this.lastAssistantMessageId = null;
 
         const messagesList = document.getElementById('messagesList');
         if (messagesList) {
