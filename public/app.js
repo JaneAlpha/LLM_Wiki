@@ -209,10 +209,23 @@ class LLMWikiApp {
                 return {
                     ...baseMessage,
                     type: 'tool',
-                    content: `工具执行: ${sdkMsg.tool_name}`,
+                    content: `工具执行: ${sdkMsg.tool_name} (${sdkMsg.elapsed_time_seconds}s)`,
                     metadata: {
                         toolName: sdkMsg.tool_name,
-                        elapsedTime: sdkMsg.elapsed_time_seconds
+                        elapsedTime: sdkMsg.elapsed_time_seconds,
+                        toolUseId: sdkMsg.tool_use_id,
+                        taskId: sdkMsg.task_id
+                    }
+                };
+
+            case 'tool_use_summary':
+                return {
+                    ...baseMessage,
+                    type: 'summary',
+                    content: `工具使用摘要: ${sdkMsg.summary}`,
+                    metadata: {
+                        summary: sdkMsg.summary,
+                        precedingToolUseIds: sdkMsg.preceding_tool_use_ids
                     }
                 };
 
@@ -245,12 +258,27 @@ class LLMWikiApp {
                 };
 
             case 'result':
+                const resultType = sdkMsg.subtype === 'success' ? '成功' : sdkMsg.subtype || '完成';
+                let resultContent = `操作${resultType}`;
+
+                if (sdkMsg.subtype === 'success' && sdkMsg.result) {
+                    resultContent = `操作成功: ${sdkMsg.result.substring(0, 200)}${sdkMsg.result.length > 200 ? '...' : ''}`;
+                } else if (sdkMsg.subtype !== 'success') {
+                    resultContent = `操作失败: ${sdkMsg.subtype}`;
+                }
+
                 return {
                     ...baseMessage,
-                    type: 'success',
-                    content: `操作完成: ${sdkMsg.result ? '成功' : '失败'}`,
+                    type: sdkMsg.subtype === 'success' ? 'success' : 'error',
+                    content: resultContent,
                     metadata: {
-                        costUsd: sdkMsg.total_cost_usd
+                        costUsd: sdkMsg.total_cost_usd,
+                        numTurns: sdkMsg.num_turns,
+                        durationMs: sdkMsg.duration_ms,
+                        permissionDenials: sdkMsg.permission_denials || [],
+                        usage: sdkMsg.usage,
+                        modelUsage: sdkMsg.modelUsage,
+                        stopReason: sdkMsg.stop_reason
                     }
                 };
 
@@ -268,9 +296,29 @@ class LLMWikiApp {
         if (!content) return '无内容';
         if (typeof content === 'string') return content;
         if (Array.isArray(content)) {
-            // 提取文本内容
-            const texts = content.filter(item => item.type === 'text').map(item => item.text);
-            return texts.join('\n');
+            // 处理内容块数组
+            const parts = [];
+
+            content.forEach(item => {
+                if (item.type === 'text') {
+                    parts.push(item.text);
+                } else if (item.type === 'tool_use') {
+                    // 工具调用块
+                    const toolInfo = `[工具调用: ${item.name}]`;
+                    let inputStr = '';
+                    try {
+                        inputStr = JSON.stringify(item.input, null, 2);
+                        if (inputStr.length > 500) {
+                            inputStr = inputStr.substring(0, 500) + '... (已截断)';
+                        }
+                    } catch (e) {
+                        inputStr = '[无法解析输入参数]';
+                    }
+                    parts.push(`${toolInfo}\n工具ID: ${item.id}\n输入参数: ${inputStr}`);
+                }
+            });
+
+            return parts.join('\n\n');
         }
         return JSON.stringify(content);
     }
@@ -318,7 +366,8 @@ class LLMWikiApp {
             'tool': '工具',
             'progress': '进度',
             'error': '错误',
-            'success': '成功'
+            'success': '成功',
+            'summary': '摘要'
         };
         const typeLabel = typeLabels[message.type] || message.type;
 
@@ -360,7 +409,50 @@ class LLMWikiApp {
             `;
         }
 
-        messageElement.innerHTML = headerHtml + contentHtml + toolInfoHtml + tokenInfoHtml;
+        // 成本信息（如果有）
+        let costInfoHtml = '';
+        if (message.metadata.costUsd !== undefined) {
+            costInfoHtml = `
+                <div class="message-cost-info">
+                    成本: $${message.metadata.costUsd.toFixed(6)}
+                </div>
+            `;
+        }
+
+        // 操作统计信息（如果有）
+        let statsInfoHtml = '';
+        if (message.metadata.numTurns !== undefined || message.metadata.durationMs !== undefined) {
+            const turns = message.metadata.numTurns !== undefined ? `轮次: ${message.metadata.numTurns}` : '';
+            const duration = message.metadata.durationMs !== undefined ? `耗时: ${(message.metadata.durationMs / 1000).toFixed(2)}s` : '';
+            const separator = turns && duration ? ' | ' : '';
+            statsInfoHtml = `
+                <div class="message-stats-info">
+                    ${turns}${separator}${duration}
+                </div>
+            `;
+        }
+
+        // 权限拒绝信息（如果有）
+        let permissionInfoHtml = '';
+        if (message.metadata.permissionDenials && message.metadata.permissionDenials.length > 0) {
+            permissionInfoHtml = `
+                <div class="message-permission-info">
+                    权限拒绝: ${message.metadata.permissionDenials.length} 次
+                </div>
+            `;
+        }
+
+        // 摘要信息（如果有）
+        let summaryInfoHtml = '';
+        if (message.metadata.summary) {
+            summaryInfoHtml = `
+                <div class="message-summary-info">
+                    摘要: ${this.escapeHtml(message.metadata.summary)}
+                </div>
+            `;
+        }
+
+        messageElement.innerHTML = headerHtml + contentHtml + toolInfoHtml + tokenInfoHtml + costInfoHtml + statsInfoHtml + permissionInfoHtml + summaryInfoHtml;
         messagesList.appendChild(messageElement);
     }
 
@@ -578,7 +670,50 @@ class LLMWikiApp {
             `;
         }
 
-        messageElement.innerHTML = headerHtml + contentHtml + toolInfoHtml + tokenInfoHtml;
+        // 成本信息（如果有）
+        let costInfoHtml = '';
+        if (message.metadata.costUsd !== undefined) {
+            costInfoHtml = `
+                <div class="message-cost-info">
+                    成本: $${message.metadata.costUsd.toFixed(6)}
+                </div>
+            `;
+        }
+
+        // 操作统计信息（如果有）
+        let statsInfoHtml = '';
+        if (message.metadata.numTurns !== undefined || message.metadata.durationMs !== undefined) {
+            const turns = message.metadata.numTurns !== undefined ? `轮次: ${message.metadata.numTurns}` : '';
+            const duration = message.metadata.durationMs !== undefined ? `耗时: ${(message.metadata.durationMs / 1000).toFixed(2)}s` : '';
+            const separator = turns && duration ? ' | ' : '';
+            statsInfoHtml = `
+                <div class="message-stats-info">
+                    ${turns}${separator}${duration}
+                </div>
+            `;
+        }
+
+        // 权限拒绝信息（如果有）
+        let permissionInfoHtml = '';
+        if (message.metadata.permissionDenials && message.metadata.permissionDenials.length > 0) {
+            permissionInfoHtml = `
+                <div class="message-permission-info">
+                    权限拒绝: ${message.metadata.permissionDenials.length} 次
+                </div>
+            `;
+        }
+
+        // 摘要信息（如果有）
+        let summaryInfoHtml = '';
+        if (message.metadata.summary) {
+            summaryInfoHtml = `
+                <div class="message-summary-info">
+                    摘要: ${this.escapeHtml(message.metadata.summary)}
+                </div>
+            `;
+        }
+
+        messageElement.innerHTML = headerHtml + contentHtml + toolInfoHtml + tokenInfoHtml + costInfoHtml + statsInfoHtml + permissionInfoHtml + summaryInfoHtml;
         messagesList.appendChild(messageElement);
     }
 
@@ -589,7 +724,8 @@ class LLMWikiApp {
             'tool': '工具',
             'progress': '进度',
             'error': '错误',
-            'success': '成功'
+            'success': '成功',
+            'summary': '摘要'
         };
         return labels[type] || type;
     }
