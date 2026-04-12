@@ -15,6 +15,10 @@ class LLMWikiApp {
         this.maxWsReconnectAttempts = 5;
         this.pendingOperations = new Map(); // operationId -> callback
 
+        // 工具调用跟踪
+        this.toolUseToMessageMap = new Map(); // tool_use_id -> messageId
+        this.lastAssistantMessageId = null; // 最近助手消息ID
+
         this.init();
     }
 
@@ -109,7 +113,19 @@ class LLMWikiApp {
             case 'sdk_message':
                 // 处理SDK消息
                 const processedMsg = this.processSDKMessage(message.message);
-                this.addMessage(processedMsg.type, processedMsg.content, processedMsg.metadata, processedMsg.category);
+
+                if (processedMsg.type === 'tool_progress') {
+                    // 工具调用进度：更新最近的助手消息
+                    if (this.lastAssistantMessageId) {
+                        this.addToolProgressToMessage(this.lastAssistantMessageId, processedMsg.metadata);
+                    } else {
+                        // 如果没有助手消息，创建新的系统消息显示工具进度
+                        this.addMessage('system', processedMsg.content, processedMsg.metadata, 'internal');
+                    }
+                } else {
+                    // 其他消息正常添加
+                    this.addMessage(processedMsg.type, processedMsg.content, processedMsg.metadata, processedMsg.category);
+                }
                 break;
 
             case 'operation_complete':
@@ -210,7 +226,7 @@ class LLMWikiApp {
             case 'tool_progress':
                 return {
                     ...baseMessage,
-                    type: 'tool',
+                    type: 'tool_progress', // 特殊类型，表示工具调用进度更新
                     category: 'internal',
                     content: `工具执行: ${sdkMsg.tool_name} (${sdkMsg.elapsed_time_seconds}s)`,
                     metadata: {
@@ -438,6 +454,12 @@ class LLMWikiApp {
         };
 
         this.messages.push(message);
+
+        // 更新助手消息跟踪
+        if (type === 'assistant') {
+            this.lastAssistantMessageId = messageId;
+        }
+
         this.renderMessage(message);
         this.updateMessageCounter();
 
@@ -448,6 +470,68 @@ class LLMWikiApp {
         }
 
         return messageId;
+    }
+
+    // 更新现有消息
+    updateMessage(messageId, updates) {
+        const messageIndex = this.messages.findIndex(msg => msg.id === messageId);
+        if (messageIndex === -1) return false;
+
+        const message = this.messages[messageIndex];
+
+        // 应用更新
+        Object.assign(message, updates);
+
+        // 重新渲染消息
+        const messageElement = document.getElementById(`message-${messageId}`);
+        if (messageElement) {
+            messageElement.remove();
+        }
+
+        this.renderMessage(message);
+        return true;
+    }
+
+    // 向消息添加工具调用进度
+    addToolProgressToMessage(messageId, toolProgress) {
+        const message = this.messages.find(msg => msg.id === messageId);
+        if (!message) return false;
+
+        // 确保消息有toolProgress数组
+        if (!message.metadata.toolProgress) {
+            message.metadata.toolProgress = [];
+        }
+
+        // 查找是否已有相同tool_use_id的进度
+        const existingIndex = message.metadata.toolProgress.findIndex(
+            tp => tp.toolUseId === toolProgress.toolUseId
+        );
+
+        if (existingIndex !== -1) {
+            // 更新现有进度
+            message.metadata.toolProgress[existingIndex] = toolProgress;
+        } else {
+            // 添加新进度
+            message.metadata.toolProgress.push(toolProgress);
+        }
+
+        // 重新渲染消息以显示更新
+        this.rerenderMessage(messageId);
+        return true;
+    }
+
+    // 重新渲染消息
+    rerenderMessage(messageId) {
+        const message = this.messages.find(msg => msg.id === messageId);
+        if (!message) return false;
+
+        const messageElement = document.getElementById(`message-${messageId}`);
+        if (messageElement) {
+            messageElement.remove();
+        }
+
+        this.renderMessage(message);
+        return true;
     }
 
     renderMessage(message) {
@@ -484,7 +568,28 @@ class LLMWikiApp {
 
         // 工具信息（如果有）
         let toolInfoHtml = '';
-        if (message.metadata.toolName) {
+
+        // 检查是否有工具调用进度数组
+        if (message.metadata.toolProgress && message.metadata.toolProgress.length > 0) {
+            // 显示所有工具调用进度
+            let toolItems = '';
+            message.metadata.toolProgress.forEach(tp => {
+                toolItems += `
+                    <div class="tool-progress-item">
+                        <span class="tool-name">${tp.toolName}</span>
+                        ${tp.elapsedTime ? `<span class="tool-time">执行中 (${tp.elapsedTime}s)</span>` : '<span class="tool-time">开始执行</span>'}
+                    </div>
+                `;
+            });
+
+            toolInfoHtml = `
+                <div class="message-tool-info">
+                    <div class="tool-progress-header">工具调用进度:</div>
+                    ${toolItems}
+                </div>
+            `;
+        } else if (message.metadata.toolName) {
+            // 向后兼容：单个工具信息
             toolInfoHtml = `
                 <div class="message-tool-info">
                     <span class="message-tool-name">工具: ${message.metadata.toolName}</span>
