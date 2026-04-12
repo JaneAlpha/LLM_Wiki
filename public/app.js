@@ -50,7 +50,7 @@ class LLMWikiApp {
             console.log('WebSocket连接已建立');
             this.wsConnected = true;
             this.wsReconnectAttempts = 0;
-            this.addMessage('system', 'WebSocket连接已建立');
+            this.addMessage('system', 'WebSocket连接已建立', {}, 'internal');
             this.updateServerStatus('WebSocket已连接');
         };
 
@@ -68,7 +68,7 @@ class LLMWikiApp {
             this.wsConnected = false;
             this.ws = null;
 
-            this.addMessage('system', `WebSocket连接断开: ${event.code} ${event.reason || ''}`);
+            this.addMessage('system', `WebSocket连接断开: ${event.code} ${event.reason || ''}`, {}, 'internal');
             this.updateServerStatus('WebSocket断开');
 
             // 尝试重连
@@ -87,7 +87,7 @@ class LLMWikiApp {
 
         this.ws.onerror = (error) => {
             console.error('WebSocket错误:', error);
-            this.addMessage('error', 'WebSocket连接错误');
+            this.addMessage('error', 'WebSocket连接错误', {}, 'internal');
             this.updateServerStatus('WebSocket错误');
         };
     }
@@ -103,20 +103,20 @@ class LLMWikiApp {
                 break;
 
             case 'operation_started':
-                this.addMessage('system', `开始${message.operation}操作`);
+                this.addMessage('system', `开始${message.operation}操作`, {}, 'internal');
                 break;
 
             case 'sdk_message':
                 // 处理SDK消息
                 const processedMsg = this.processSDKMessage(message.message);
-                this.addMessage(processedMsg.type, processedMsg.content, processedMsg.metadata);
+                this.addMessage(processedMsg.type, processedMsg.content, processedMsg.metadata, processedMsg.category);
                 break;
 
             case 'operation_complete':
                 this.showResult(`${message.operation}完成`, message.result);
                 document.getElementById('costBadge').textContent = `成本: $${message.costUsd.toFixed(4)}`;
                 document.getElementById('costBadge').style.display = 'inline-block';
-                this.addMessage('success', `${message.operation}操作完成，成本: $${message.costUsd.toFixed(4)}`);
+                this.addMessage('success', `${message.operation}操作完成，成本: $${message.costUsd.toFixed(4)}`, {}, 'final');
 
                 // 完成特定操作后的处理
                 if (message.operation === 'ingest') {
@@ -133,7 +133,7 @@ class LLMWikiApp {
                 break;
 
             case 'operation_error':
-                this.addMessage('error', `${message.operation}错误: ${message.error}`);
+                this.addMessage('error', `${message.operation}错误: ${message.error}`, {}, 'final');
                 this.showResult(`${message.operation}失败`, `错误: ${message.error}`);
 
                 // 清除处理状态
@@ -188,7 +188,8 @@ class LLMWikiApp {
         // 根据SDK消息类型转换为前端消息格式
         const baseMessage = {
             timestamp: new Date().toLocaleTimeString(),
-            metadata: {}
+            metadata: {},
+            category: 'internal' // 默认是内部工作
         };
 
         switch (sdkMsg.type) {
@@ -196,6 +197,7 @@ class LLMWikiApp {
                 return {
                     ...baseMessage,
                     type: 'assistant',
+                    category: 'final',
                     content: this.extractAssistantContent(sdkMsg.message?.content),
                     metadata: {
                         tokens: sdkMsg.message?.usage ? {
@@ -209,6 +211,7 @@ class LLMWikiApp {
                 return {
                     ...baseMessage,
                     type: 'tool',
+                    category: 'internal',
                     content: `工具执行: ${sdkMsg.tool_name} (${sdkMsg.elapsed_time_seconds}s)`,
                     metadata: {
                         toolName: sdkMsg.tool_name,
@@ -222,6 +225,7 @@ class LLMWikiApp {
                 return {
                     ...baseMessage,
                     type: 'summary',
+                    category: 'internal',
                     content: `工具使用摘要: ${sdkMsg.summary}`,
                     metadata: {
                         summary: sdkMsg.summary,
@@ -234,6 +238,7 @@ class LLMWikiApp {
                     return {
                         ...baseMessage,
                         type: 'system',
+                        category: 'internal',
                         content: `子智能体启动: ${sdkMsg.description}`
                     };
                 }
@@ -241,6 +246,7 @@ class LLMWikiApp {
                     return {
                         ...baseMessage,
                         type: 'progress',
+                        category: 'internal',
                         content: `任务进度: ${sdkMsg.description}`
                     };
                 }
@@ -248,12 +254,14 @@ class LLMWikiApp {
                     return {
                         ...baseMessage,
                         type: sdkMsg.status === 'completed' ? 'success' : 'error',
+                        category: 'internal',
                         content: `任务完成: ${sdkMsg.summary}`
                     };
                 }
                 return {
                     ...baseMessage,
                     type: 'system',
+                    category: 'internal',
                     content: sdkMsg.subtype || '系统消息'
                 };
 
@@ -270,6 +278,7 @@ class LLMWikiApp {
                 return {
                     ...baseMessage,
                     type: sdkMsg.subtype === 'success' ? 'success' : 'error',
+                    category: 'final',
                     content: resultContent,
                     metadata: {
                         costUsd: sdkMsg.total_cost_usd,
@@ -286,6 +295,7 @@ class LLMWikiApp {
                 return {
                     ...baseMessage,
                     type: 'system',
+                    category: 'internal',
                     content: `消息类型: ${sdkMsg.type}`,
                     metadata: { raw: sdkMsg }
                 };
@@ -323,186 +333,8 @@ class LLMWikiApp {
         return JSON.stringify(content);
     }
 
-    addMessage(type, content, metadata = {}) {
-        const messageId = ++this.messageCount;
-        const message = {
-            id: messageId,
-            type,
-            content,
-            timestamp: new Date().toLocaleTimeString(),
-            metadata
-        };
 
-        this.messages.push(message);
-        this.renderMessage(message);
-        this.updateMessageCounter();
 
-        // 自动滚动到底部
-        const messagesList = document.getElementById('messagesList');
-        if (messagesList) {
-            messagesList.scrollTop = messagesList.scrollHeight;
-        }
-
-        return messageId;
-    }
-
-    renderMessage(message) {
-        const messagesList = document.getElementById('messagesList');
-        if (!messagesList) return;
-
-        // 确保消息列表可见
-        const placeholder = document.getElementById('messagesPlaceholder');
-        if (placeholder) placeholder.style.display = 'none';
-        messagesList.style.display = 'block';
-
-        const messageElement = document.createElement('div');
-        messageElement.className = `message-item ${message.type}`;
-        messageElement.id = `message-${message.id}`;
-
-        // 消息头部：类型和时间
-        const typeLabels = {
-            'system': '系统',
-            'assistant': '助手',
-            'tool': '工具',
-            'progress': '进度',
-            'error': '错误',
-            'success': '成功',
-            'summary': '摘要'
-        };
-        const typeLabel = typeLabels[message.type] || message.type;
-
-        const headerHtml = `
-            <div class="message-header">
-                <span class="message-type ${message.type}">${typeLabel}</span>
-                <span class="message-time">${message.timestamp}</span>
-            </div>
-        `;
-
-        // 消息内容
-        let contentHtml = '';
-        if (typeof message.content === 'string') {
-            // 简单文本内容
-            contentHtml = `<div class="message-content">${this.escapeHtml(message.content)}</div>`;
-        } else {
-            // 复杂对象内容
-            contentHtml = `<div class="message-content"><pre>${this.escapeHtml(JSON.stringify(message.content, null, 2))}</pre></div>`;
-        }
-
-        // 工具信息（如果有）
-        let toolInfoHtml = '';
-        if (message.metadata.toolName) {
-            toolInfoHtml = `
-                <div class="message-tool-info">
-                    <span class="message-tool-name">工具: ${message.metadata.toolName}</span>
-                    ${message.metadata.elapsedTime ? `<span class="message-tool-time">耗时: ${message.metadata.elapsedTime}s</span>` : ''}
-                </div>
-            `;
-        }
-
-        // Token使用信息（如果有）
-        let tokenInfoHtml = '';
-        if (message.metadata.tokens) {
-            tokenInfoHtml = `
-                <div class="message-token-usage">
-                    Token使用: 输入 ${message.metadata.tokens.input || 0}, 输出 ${message.metadata.tokens.output || 0}
-                </div>
-            `;
-        }
-
-        // 成本信息（如果有）
-        let costInfoHtml = '';
-        if (message.metadata.costUsd !== undefined) {
-            costInfoHtml = `
-                <div class="message-cost-info">
-                    成本: $${message.metadata.costUsd.toFixed(6)}
-                </div>
-            `;
-        }
-
-        // 操作统计信息（如果有）
-        let statsInfoHtml = '';
-        if (message.metadata.numTurns !== undefined || message.metadata.durationMs !== undefined) {
-            const turns = message.metadata.numTurns !== undefined ? `轮次: ${message.metadata.numTurns}` : '';
-            const duration = message.metadata.durationMs !== undefined ? `耗时: ${(message.metadata.durationMs / 1000).toFixed(2)}s` : '';
-            const separator = turns && duration ? ' | ' : '';
-            statsInfoHtml = `
-                <div class="message-stats-info">
-                    ${turns}${separator}${duration}
-                </div>
-            `;
-        }
-
-        // 权限拒绝信息（如果有）
-        let permissionInfoHtml = '';
-        if (message.metadata.permissionDenials && message.metadata.permissionDenials.length > 0) {
-            permissionInfoHtml = `
-                <div class="message-permission-info">
-                    权限拒绝: ${message.metadata.permissionDenials.length} 次
-                </div>
-            `;
-        }
-
-        // 摘要信息（如果有）
-        let summaryInfoHtml = '';
-        if (message.metadata.summary) {
-            summaryInfoHtml = `
-                <div class="message-summary-info">
-                    摘要: ${this.escapeHtml(message.metadata.summary)}
-                </div>
-            `;
-        }
-
-        messageElement.innerHTML = headerHtml + contentHtml + toolInfoHtml + tokenInfoHtml + costInfoHtml + statsInfoHtml + permissionInfoHtml + summaryInfoHtml;
-        messagesList.appendChild(messageElement);
-    }
-
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    updateMessageCounter() {
-        const counter = document.getElementById('messageCounter');
-        if (counter) {
-            counter.textContent = `消息: ${this.messageCount}`;
-        }
-    }
-
-    clearMessages() {
-        this.messages = [];
-        this.messageCount = 0;
-
-        const messagesList = document.getElementById('messagesList');
-        if (messagesList) {
-            messagesList.innerHTML = '';
-            messagesList.style.display = 'none';
-        }
-
-        const placeholder = document.getElementById('messagesPlaceholder');
-        if (placeholder) {
-            placeholder.style.display = 'block';
-        }
-
-        this.updateMessageCounter();
-        this.addMessage('system', '消息历史已清空');
-    }
-
-    toggleMessages() {
-        const messagesSection = document.querySelector('.messages-section');
-        if (messagesSection) {
-            messagesSection.classList.toggle('collapsed');
-            const btn = document.getElementById('toggleMessagesBtn');
-            const icon = btn.querySelector('i');
-            if (messagesSection.classList.contains('collapsed')) {
-                icon.className = 'fas fa-eye-slash';
-                btn.innerHTML = '<i class="fas fa-eye-slash"></i> 显示/隐藏';
-            } else {
-                icon.className = 'fas fa-eye';
-                btn.innerHTML = '<i class="fas fa-eye"></i> 显示/隐藏';
-            }
-        }
-    }
 
     initEventListeners() {
         // 选项卡切换
@@ -593,7 +425,7 @@ class LLMWikiApp {
     }
 
     // 消息面板方法
-    addMessage(type, content, metadata = {}) {
+    addMessage(type, content, metadata = {}, category = 'internal') {
         const timestamp = new Date().toLocaleTimeString();
         const messageId = ++this.messageCount;
         const message = {
@@ -601,7 +433,8 @@ class LLMWikiApp {
             type,
             content,
             timestamp,
-            metadata
+            metadata,
+            category
         };
 
         this.messages.push(message);
@@ -627,7 +460,7 @@ class LLMWikiApp {
         messagesList.style.display = 'block';
 
         const messageElement = document.createElement('div');
-        messageElement.className = `message-item ${message.type}`;
+        messageElement.className = `message-item ${message.type} category-${message.category || 'internal'}`;
         messageElement.id = `message-${message.id}`;
 
         // 消息头部：类型和时间
@@ -759,7 +592,7 @@ class LLMWikiApp {
         }
 
         this.updateMessageCounter();
-        this.addMessage('system', '消息历史已清空');
+        this.addMessage('system', '消息历史已清空', {}, 'internal');
     }
 
     toggleMessages() {
@@ -824,11 +657,11 @@ class LLMWikiApp {
         const op = operations[operation];
         if (!op) return;
 
-        this.addMessage('system', `开始${op.name}...`);
+        this.addMessage('system', `开始${op.name}...`, {}, 'internal');
 
         op.steps.forEach(step => {
             setTimeout(() => {
-                this.addMessage(step.type, step.content, step.metadata || {});
+                this.addMessage(step.type, step.content, step.metadata || {}, 'internal');
             }, step.delay);
         });
 
@@ -1046,7 +879,7 @@ class LLMWikiApp {
 
         // 清空之前的消息
         this.clearMessages();
-        this.addMessage('system', `开始Ingest处理: ${filePath}`);
+        this.addMessage('system', `开始Ingest处理: ${filePath}`, {}, 'internal');
 
         this.showResult('Ingest处理中...', '正在处理源文件，请稍候...');
 
@@ -1076,7 +909,7 @@ class LLMWikiApp {
 
         // 清空之前的消息
         this.clearMessages();
-        this.addMessage('system', `开始查询: ${question.substring(0, 100)}${question.length > 100 ? '...' : ''}`);
+        this.addMessage('system', `开始查询: ${question.substring(0, 100)}${question.length > 100 ? '...' : ''}`, {}, 'internal');
 
         this.showResult('查询中...', '正在搜索wiki并生成答案，请稍候...');
 
@@ -1100,7 +933,7 @@ class LLMWikiApp {
 
         // 清空之前的消息
         this.clearMessages();
-        this.addMessage('system', '开始Lint检查');
+        this.addMessage('system', '开始Lint检查', {}, 'internal');
 
         this.showResult('Lint检查中...', '正在检查wiki健康度，请稍候...');
 

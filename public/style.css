@@ -800,3 +800,45 @@ footer {
     margin-bottom: 0;
     border-bottom: none;
 }
+
+/* 消息分类样式 */
+.message-item.category-internal {
+    opacity: 0.85;
+    background-color: #f9f9f9 !important;
+    border-left-width: 3px !important;
+}
+
+.message-item.category-final {
+    background-color: #f0f8ff !important;
+    border-left-width: 5px !important;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.message-item.category-internal .message-type {
+    opacity: 0.8;
+}
+
+.message-item.category-final .message-type {
+    font-weight: bold;
+}
+
+/* 工具调用自动刷新样式 */
+.message-item.tool.category-internal {
+    border-left-color: #f39c12 !important;
+    background-color: #fef5e7 !important;
+}
+
+.message-item.tool.category-internal:hover {
+    background-color: #fdebd0 !important;
+}
+
+/* 最终回复突出显示 */
+.message-item.assistant.category-final {
+    border-left-color: #2ecc71 !important;
+    background-color: #eafaf1 !important;
+}
+
+.message-item.success.category-final {
+    border-left-color: #27ae60 !important;
+    background-color: #e8f5e9 !important;
+}
