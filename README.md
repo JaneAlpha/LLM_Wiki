@@ -17,7 +17,7 @@
 - Docker 20.10+ 和 Docker Compose 2.0+
 - Anthropic API密钥（获取地址：[Anthropic Console](https://console.anthropic.com)）
 
-### 3分钟部署
+### 3分钟部署（Docker）
 
 ```bash
 # 1. 克隆项目
@@ -36,45 +36,27 @@ chmod +x run.sh
 # 打开浏览器: http://localhost:3001
 ```
 
-### 🚀 在GitHub Codespace中运行
+### 开发环境安装（非Docker）
 
-1. **打开GitHub Codespace**
-   - 在仓库页面点击 "Code" > "Codespaces" > "Create codespace on main"
-   - 等待环境初始化完成
+如果你想在开发环境中运行：
 
-2. **安装依赖**
-   ```bash
-   cd server
-   npm install
-   ```
+```bash
+# 1. 克隆项目
+git clone <repository-url>
+cd llm-wiki-app
 
-3. **安装OpenClaude CLI**
-   ```bash
-   npm install -g @gitlawb/openclaude@0.1.8
-   # 验证安装
-   openclaude --version
-   ```
+# 2. 一键安装依赖
+chmod +x install.sh
+./install.sh
 
-4. **设置环境变量**
-   ```bash
-   export ANTHROPIC_API_KEY=your_api_key_here
-   # 或者编辑 .env 文件
-   cp .env.example .env
-   # 编辑 .env 文件设置您的API密钥
-   ```
+# 3. 配置API密钥（如果尚未配置）
+# 编辑.env文件，设置ANTHROPIC_API_KEY
 
-5. **构建并运行**
-   ```bash
-   npm run build
-   npm start
-   ```
+# 4. 启动开发服务器
+cd server
+npm run dev
+```
 
-6. **访问应用**
-   - Codespace会自动转发端口
-   - 点击终端中的 "Open in Browser" 链接
-   - 或访问: https://{your-codespace-url}-3001.app.github.dev
-
-> **注意**: wiki-data目录在首次运行时自动创建，包含初始的index.md和log.md文件。
 
 ## 📁 项目结构
 
@@ -96,7 +78,8 @@ llm-wiki-app/
 ├── Dockerfile          # Docker构建配置
 ├── docker-compose.yml  # Docker编排配置
 ├── .env.example        # 环境变量模板
-├── run.sh              # 一键管理脚本
+├── run.sh              # Docker一键管理脚本
+├── install.sh          # 开发环境安装脚本
 ├── DEPLOYMENT.md       # 详细部署指南
 └── README.md           # 本文档
 ```
@@ -143,7 +126,8 @@ llm-wiki-app/
 
 ## 📊 管理命令
 
-使用`run.sh`脚本管理服务：
+### Docker服务管理
+使用`run.sh`脚本管理Docker服务：
 
 ```bash
 # 启动服务
@@ -169,6 +153,17 @@ llm-wiki-app/
 
 # 清理资源
 ./run.sh clean
+```
+
+### 开发环境管理
+使用`install.sh`脚本设置开发环境：
+
+```bash
+# 安装所有依赖（Node.js、OpenClaude CLI、服务器依赖）
+./install.sh
+
+# 启动开发服务器
+cd server && npm run dev
 ```
 
 ## 🔒 安全建议

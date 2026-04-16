@@ -11,6 +11,9 @@ COPY server/package*.json ./server/
 WORKDIR /app/server
 RUN npm ci --only=production
 
+# 全局安装OpenClaude CLI（确保在PATH中可用）
+RUN npm install -g @gitlawb/openclaude@0.3.0
+
 # 复制服务器源代码
 COPY server/src ./src
 COPY server/tsconfig.json ./
@@ -32,9 +35,13 @@ FROM node:20-alpine
 ENV NODE_ENV=production
 ENV PORT=3001
 ENV WIKI_ROOT=/app/wiki-data
+ENV OPENCLAUDE_EXECUTABLE_PATH=/usr/local/bin/openclaude
 
 # 设置工作目录
 WORKDIR /app
+
+# 全局安装OpenClaude CLI（必须在创建用户前以root身份安装）
+RUN npm install -g @gitlawb/openclaude@0.3.0
 
 # 创建非root用户
 RUN addgroup -g 1001 -S nodejs && \

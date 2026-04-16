@@ -12,7 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@codrstudio/openclaude-sdk": "^0.1.0",
+    "@codrstudio/openclaude-sdk": "^0.4.0",
     "@types/cors": "^2.8.19",
     "@types/ws": "^8.18.1",
     "cors": "^2.8.6",
