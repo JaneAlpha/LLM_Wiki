@@ -2,7 +2,7 @@
 class LLMWikiApp {
     constructor() {
         this.apiBase = '/api';
-        this.currentPath = '/root/LLM_Wiki/llm-wiki-app/wiki-data';
+        this.currentPath = ''; // 初始化为空，首次加载时通过API获取
         this.isProcessing = false;
         this.messages = [];
         this.messageCount = 0;
@@ -54,7 +54,6 @@ class LLMWikiApp {
             console.log('WebSocket连接已建立');
             this.wsConnected = true;
             this.wsReconnectAttempts = 0;
-            this.addMessage('system', 'WebSocket连接已建立', {}, 'internal');
             this.updateServerStatus('WebSocket已连接');
         };
 
@@ -72,7 +71,6 @@ class LLMWikiApp {
             this.wsConnected = false;
             this.ws = null;
 
-            this.addMessage('system', `WebSocket连接断开: ${event.code} ${event.reason || ''}`, {}, 'internal');
             this.updateServerStatus('WebSocket断开');
 
             // 尝试重连
@@ -107,12 +105,13 @@ class LLMWikiApp {
                 break;
 
             case 'operation_started':
-                this.addMessage('system', `开始${message.operation}操作`, {}, 'internal');
                 break;
 
             case 'sdk_message':
                 // 处理SDK消息
+                console.log('收到SDK消息:', message.message);
                 const processedMsg = this.processSDKMessage(message.message);
+                console.log('处理后消息:', processedMsg);
 
                 if (processedMsg.type === 'tool_progress') {
                     // 工具调用进度：根据tool_use_id找到对应的助手消息
@@ -130,13 +129,12 @@ class LLMWikiApp {
 
                     if (targetMessageId) {
                         this.addToolProgressToMessage(targetMessageId, processedMsg.metadata);
-                    } else {
-                        // 如果没有助手消息，创建新的系统消息显示工具进度
-                        this.addMessage('system', processedMsg.content, processedMsg.metadata, 'internal');
                     }
                 } else {
-                    // 其他消息正常添加
-                    this.addMessage(processedMsg.type, processedMsg.content, processedMsg.metadata, processedMsg.category);
+                    // 其他消息正常添加，但跳过系统消息和成功消息
+                    if (processedMsg.type !== 'system' && processedMsg.type !== 'success') {
+                        this.addMessage(processedMsg.type, processedMsg.content, processedMsg.metadata, processedMsg.category);
+                    }
                 }
                 break;
 
@@ -144,7 +142,6 @@ class LLMWikiApp {
                 this.showResult(`${message.operation}完成`, message.result);
                 document.getElementById('costBadge').textContent = `成本: $${message.costUsd.toFixed(4)}`;
                 document.getElementById('costBadge').style.display = 'inline-block';
-                this.addMessage('success', `${message.operation}操作完成，成本: $${message.costUsd.toFixed(4)}`, {}, 'final');
 
                 // 完成特定操作后的处理
                 if (message.operation === 'ingest') {
@@ -223,6 +220,8 @@ class LLMWikiApp {
         switch (sdkMsg.type) {
             case 'assistant':
                 const assistantContent = sdkMsg.message?.content;
+                const toolUseIds = this.extractToolUseIdsFromAssistantContent(assistantContent);
+                console.log('处理assistant消息，提取的toolUseIds:', toolUseIds, '内容:', assistantContent);
                 return {
                     ...baseMessage,
                     type: 'assistant',
@@ -233,11 +232,14 @@ class LLMWikiApp {
                             input: sdkMsg.message.usage.input_tokens,
                             output: sdkMsg.message.usage.output_tokens
                         } : undefined,
-                        toolUseIds: this.extractToolUseIdsFromAssistantContent(assistantContent)
+                        toolUseIds: toolUseIds
                     }
                 };
 
             case 'tool_progress':
+                console.log('处理tool_progress消息:', sdkMsg);
+                console.log('tool_use_id:', sdkMsg.tool_use_id);
+                console.log('tool_name:', sdkMsg.tool_name);
                 return {
                     ...baseMessage,
                     type: 'tool_progress', // 特殊类型，表示工具调用进度更新
@@ -344,17 +346,8 @@ class LLMWikiApp {
                     parts.push(item.text);
                 } else if (item.type === 'tool_use') {
                     // 工具调用块
-                    const toolInfo = `[工具调用: ${item.name}]`;
-                    let inputStr = '';
-                    try {
-                        inputStr = JSON.stringify(item.input, null, 2);
-                        if (inputStr.length > 500) {
-                            inputStr = inputStr.substring(0, 500) + '... (已截断)';
-                        }
-                    } catch (e) {
-                        inputStr = '[无法解析输入参数]';
-                    }
-                    parts.push(`${toolInfo}\n工具ID: ${item.id}\n输入参数: ${inputStr}`);
+                    const toolDescription = this.getToolDescription(item.name);
+                    parts.push(`[工具调用: ${toolDescription}]`);
                 }
             });
 
@@ -378,6 +371,24 @@ class LLMWikiApp {
         return toolUseIds;
     }
 
+    // 获取工具调用描述
+    getToolDescription(toolName) {
+        const toolDescriptions = {
+            'read': '读取文件',
+            'Read': '读取文件',
+            'write': '写入文件',
+            'Write': '写入文件',
+            'edit': '编辑文件',
+            'Edit': '编辑文件',
+            'glob': '搜索文件',
+            'Glob': '搜索文件',
+            'grep': '搜索内容',
+            'Grep': '搜索内容',
+            'bash': '执行命令',
+            'Bash': '执行命令'
+        };
+        return toolDescriptions[toolName] || toolName;
+    }
 
 
 
@@ -614,7 +625,7 @@ class LLMWikiApp {
             message.metadata.toolProgress.forEach(tp => {
                 toolItems += `
                     <div class="tool-progress-item">
-                        <span class="tool-name">${tp.toolName}</span>
+                        <span class="tool-name">${this.getToolDescription(tp.toolName)}</span>
                         ${tp.elapsedTime ? `<span class="tool-time">执行中 (${tp.elapsedTime}s)</span>` : '<span class="tool-time">开始执行</span>'}
                     </div>
                 `;
@@ -630,7 +641,7 @@ class LLMWikiApp {
             // 向后兼容：单个工具信息
             toolInfoHtml = `
                 <div class="message-tool-info">
-                    <span class="message-tool-name">工具: ${message.metadata.toolName}</span>
+                    <span class="message-tool-name">工具: ${this.getToolDescription(message.metadata.toolName)}</span>
                     ${message.metadata.elapsedTime ? `<span class="message-tool-time">耗时: ${message.metadata.elapsedTime}s</span>` : ''}
                 </div>
             `;
@@ -737,7 +748,6 @@ class LLMWikiApp {
         }
 
         this.updateMessageCounter();
-        this.addMessage('system', '消息历史已清空', {}, 'internal');
     }
 
     toggleMessages() {
@@ -802,15 +812,15 @@ class LLMWikiApp {
         const op = operations[operation];
         if (!op) return;
 
-        this.addMessage('system', `开始${op.name}...`, {}, 'internal');
-
         op.steps.forEach(step => {
-            setTimeout(() => {
-                this.addMessage(step.type, step.content, step.metadata || {}, 'internal');
-            }, step.delay);
+            if (step.type !== 'system') {
+                setTimeout(() => {
+                    this.addMessage(step.type, step.content, step.metadata || {}, 'internal');
+                }, step.delay);
+            }
         });
 
-        return op.steps.length;
+        return op.steps.filter(step => step.type !== 'system').length;
     }
 
     switchTab(tabName) {
@@ -897,7 +907,6 @@ class LLMWikiApp {
                 document.getElementById('browserPath').value = rootPath;
                 rootInput.value = '';
 
-                this.showMessage('success', `Wiki根目录已设置为: ${rootPath}`);
                 await this.loadWikiStatus();
                 await this.browseDirectory(rootPath);
             }
@@ -1024,7 +1033,6 @@ class LLMWikiApp {
 
         // 清空之前的消息
         this.clearMessages();
-        this.addMessage('system', `开始Ingest处理: ${filePath}`, {}, 'internal');
 
         this.showResult('Ingest处理中...', '正在处理源文件，请稍候...');
 
@@ -1054,7 +1062,6 @@ class LLMWikiApp {
 
         // 清空之前的消息
         this.clearMessages();
-        this.addMessage('system', `开始查询: ${question.substring(0, 100)}${question.length > 100 ? '...' : ''}`, {}, 'internal');
 
         this.showResult('查询中...', '正在搜索wiki并生成答案，请稍候...');
 
@@ -1078,7 +1085,6 @@ class LLMWikiApp {
 
         // 清空之前的消息
         this.clearMessages();
-        this.addMessage('system', '开始Lint检查', {}, 'internal');
 
         this.showResult('Lint检查中...', '正在检查wiki健康度，请稍候...');
 

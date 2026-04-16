@@ -1,6 +1,7 @@
 import { query, collectMessages, Options } from '@codrstudio/openclaude-sdk';
 import path from 'path';
 import fs from 'fs/promises';
+import fss from 'fs';
 
 /**
  * LLM Wiki服务 v2 - 支持直接文件路径操作
@@ -16,9 +17,14 @@ export class WikiServiceV2 {
   constructor(wikiRoot?: string, apiConfig?: { apiKey?: string; baseUrl?: string; model?: string }) {
     // 配置优先顺序：构造函数参数 > 环境变量 > 默认值
     // 默认使用项目目录下的 wiki-data（上一级目录）
-    const defaultWikiRoot = path.join(process.cwd(), '..', 'wiki-data');
+    // 使用更健壮的路径检测：尝试从当前文件位置找到项目根目录
+    const projectRoot = path.join(__dirname, '..', '..'); // server/src -> server -> project root
+    const defaultWikiRoot = path.join(projectRoot, 'wiki-data');
 
     this.wikiRoot = wikiRoot || process.env.WIKI_ROOT || defaultWikiRoot;
+
+    // 确保wiki-data目录存在
+    this.ensureWikiDirectory();
 
     // API配置，优先使用传入的配置，其次环境变量，最后默认值
     this.apiConfig = {
@@ -33,6 +39,46 @@ export class WikiServiceV2 {
    */
   setWikiRoot(rootPath: string) {
     this.wikiRoot = rootPath;
+    this.ensureWikiDirectory();
+  }
+
+  /**
+   * 确保wiki目录结构存在
+   */
+  private ensureWikiDirectory() {
+    try {
+      // 创建wiki根目录
+      fss.mkdirSync(this.wikiRoot, { recursive: true });
+
+      // 创建必要的子目录
+      const rawDir = path.join(this.wikiRoot, 'raw');
+      const wikiDir = path.join(this.wikiRoot, 'wiki');
+
+      fss.mkdirSync(rawDir, { recursive: true });
+      fss.mkdirSync(wikiDir, { recursive: true });
+
+      // 创建必要的默认文件
+      const logPath = path.join(this.wikiRoot, 'log.md');
+      const indexPath = path.join(this.wikiRoot, 'index.md');
+
+      if (!fss.existsSync(logPath)) {
+        fss.writeFileSync(logPath, '# LLM Wiki Log\n\n' +
+          '| 时间 | 操作 | 文件 | 备注 |\n' +
+          '|------|------|------|------|\n' +
+          '| ' + new Date().toISOString() + ' | 初始化 | - | Wiki系统初始化 |\n');
+      }
+
+      if (!fss.existsSync(indexPath)) {
+        fss.writeFileSync(indexPath, '# LLM Wiki Index\n\n' +
+          '## 页面列表\n\n' +
+          '### 待分类\n\n' +
+          '（暂无页面）\n');
+      }
+
+      console.log(`Wiki目录已初始化: ${this.wikiRoot}`);
+    } catch (error) {
+      console.error(`无法创建wiki目录 ${this.wikiRoot}:`, error);
+    }
   }
 
   /**
@@ -305,6 +351,16 @@ Wiki根目录：${this.wikiRoot}
   async listDirectory(dirPath?: string): Promise<{files: string[]; directories: string[]}> {
     try {
       const targetPath = dirPath || this.wikiRoot;
+
+      // 确保目录存在
+      if (!fss.existsSync(targetPath)) {
+        if (targetPath === this.wikiRoot) {
+          this.ensureWikiDirectory();
+        } else {
+          return { files: [], directories: [] };
+        }
+      }
+
       const items = await fs.readdir(targetPath, { withFileTypes: true });
 
       const files: string[] = [];
@@ -331,7 +387,22 @@ Wiki根目录：${this.wikiRoot}
   async readFile(filePath: string): Promise<string> {
     try {
       return await fs.readFile(filePath, 'utf-8');
-    } catch (error) {
+    } catch (error: any) {
+      // 如果是ENOENT错误，检查是否是关键wiki文件
+      if (error.code === 'ENOENT') {
+        const fileName = path.basename(filePath);
+        const dirName = path.dirname(filePath);
+
+        // 如果是wiki根目录下的关键文件
+        if (dirName === this.wikiRoot || dirName === path.join(this.wikiRoot, 'wiki')) {
+          if (fileName === 'log.md') {
+            return '# LLM Wiki Log\n\n| 时间 | 操作 | 文件 | 备注 |\n|------|------|------|------|\n';
+          } else if (fileName === 'index.md') {
+            return '# LLM Wiki Index\n\n## 页面列表\n\n### 待分类\n\n（暂无页面）\n';
+          }
+        }
+      }
+
       console.error('读取文件失败:', error);
       throw new Error(`读取文件失败: ${error instanceof Error ? error.message : String(error)}`);
     }
