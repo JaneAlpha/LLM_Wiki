@@ -14,8 +14,11 @@ export class WikiServiceV2 {
   };
 
   constructor(wikiRoot?: string, apiConfig?: { apiKey?: string; baseUrl?: string; model?: string }) {
-    // 默认使用项目目录下的wiki-data
-    this.wikiRoot = wikiRoot || path.join(process.cwd(), '..', 'wiki-data');
+    // 配置优先顺序：构造函数参数 > 环境变量 > 默认值
+    // 默认使用项目目录下的 wiki-data（上一级目录）
+    const defaultWikiRoot = path.join(process.cwd(), '..', 'wiki-data');
+
+    this.wikiRoot = wikiRoot || process.env.WIKI_ROOT || defaultWikiRoot;
 
     // API配置，优先使用传入的配置，其次环境变量，最后默认值
     this.apiConfig = {
@@ -55,10 +58,57 @@ export class WikiServiceV2 {
   }
 
   /**
+   * 获取OpenClaude可执行文件路径
+   */
+  private getOpenClaudeExecutablePath(): string | undefined {
+    // 优先使用环境变量配置
+    if (process.env.OPENCLAUDE_EXECUTABLE_PATH) {
+      return process.env.OPENCLAUDE_EXECUTABLE_PATH;
+    }
+
+    // 如果在当前项目目录下存在openclaude，则使用它（开发环境）
+    const projectOpenClaudePath = path.join(__dirname, '../../../openclaude/bin/openclaude');
+    try {
+      require('fs').accessSync(projectOpenClaudePath, require('fs').constants.X_OK);
+      return projectOpenClaudePath;
+    } catch (error) {
+      // 如果不存在或不可执行，返回undefined让SDK使用PATH查找
+      return undefined;
+    }
+  }
+
+  /**
+   * 构建查询选项
+   */
+  private buildQueryOptions(baseOptions: any): any {
+    const options = {
+      ...baseOptions,
+      env: this.buildEnvConfig()
+    };
+
+    const openClaudePath = this.getOpenClaudeExecutablePath();
+    if (openClaudePath) {
+      options.pathToClaudeCodeExecutable = openClaudePath;
+    }
+
+    return options;
+  }
+
+  /**
    * 构建OpenClaude环境变量配置
    */
   private buildEnvConfig() {
-    const env: Record<string, string> = {};
+    // 从当前进程环境开始
+    const env = { ...process.env } as Record<string, string>;
+
+    // 如果配置了自定义openclaude路径，添加到PATH
+    const openClaudePath = this.getOpenClaudeExecutablePath();
+    if (openClaudePath) {
+      const openClaudeBinPath = require('path').dirname(openClaudePath);
+      if (env.PATH && !env.PATH.includes(openClaudeBinPath)) {
+        env.PATH = `${openClaudeBinPath}:${env.PATH}`;
+      }
+    }
 
     // 尝试所有可能的环境变量组合
     if (this.apiConfig.apiKey) {
@@ -85,9 +135,11 @@ export class WikiServiceV2 {
       if (this.apiConfig.baseUrl && this.apiConfig.baseUrl.includes('anthropic')) {
         // 尝试明确使用Anthropic模式
         env.CLAUDE_CODE_USE_ANTHROPIC = '1';
+        delete env.CLAUDE_CODE_USE_OPENAI;
       } else {
         // 否则尝试OpenAI模式
         env.CLAUDE_CODE_USE_OPENAI = '1';
+        delete env.CLAUDE_CODE_USE_ANTHROPIC;
       }
     }
 
@@ -130,15 +182,14 @@ Wiki结构：
 
       const q = query({
         prompt: `请处理新源文件：${fileName}\n\n文件路径：${filePath}\n\n文件内容：\n${fileContent}\n\n请根据LLM Wiki规范更新wiki。确保更新index.md和log.md。`,
-        options: {
+        options: this.buildQueryOptions({
           cwd: this.wikiRoot,
           permissionMode: 'dontAsk', // 在root环境下不能使用bypassPermissions
           allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'], // 明确允许的工具
           maxTurns: 30,
           systemPrompt: systemPrompt,
-          maxBudgetUsd: 10000.00, // 设置很高预算限制
-          env: this.buildEnvConfig()
-        }
+          maxBudgetUsd: 10000.00 // 设置很高预算限制
+        })
       });
 
       const { result, costUsd, messages } = await collectMessages(q);
@@ -179,15 +230,14 @@ Wiki结构：
 
       const q = query({
         prompt: `问题：${question}\n\nWiki根目录：${this.wikiRoot}\n\n请基于LLM Wiki内容回答。`,
-        options: {
+        options: this.buildQueryOptions({
           cwd: this.wikiRoot,
           permissionMode: 'dontAsk',
           allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'],
           maxTurns: 20,
           systemPrompt: systemPrompt,
-          maxBudgetUsd: 10000.00, // 设置很高预算限制
-          env: this.buildEnvConfig()
-        }
+          maxBudgetUsd: 10000.00 // 设置很高预算限制
+        })
       });
 
       const { result, costUsd, messages } = await collectMessages(q);
@@ -225,15 +275,14 @@ Wiki根目录：${this.wikiRoot}
 
       const q = query({
         prompt: `请对LLM Wiki执行健康检查，wiki根目录：${this.wikiRoot}\n\n发现并报告问题，提出改进建议。`,
-        options: {
+        options: this.buildQueryOptions({
           cwd: this.wikiRoot,
           permissionMode: 'dontAsk',
           allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'],
           maxTurns: 35,
           systemPrompt: systemPrompt,
-          maxBudgetUsd: 10000.00, // 设置很高预算限制
-          env: this.buildEnvConfig()
-        }
+          maxBudgetUsd: 10000.00 // 设置很高预算限制
+        })
       });
 
       const { result, costUsd, messages } = await collectMessages(q);
@@ -358,7 +407,9 @@ Wiki结构：
         maxTurns: 30,
         systemPrompt,
         maxBudgetUsd: 10000.00,
-        env: this.buildEnvConfig()
+        pathToClaudeCodeExecutable: this.getOpenClaudeExecutablePath(),
+        env: this.buildEnvConfig(),
+        ...options
       }
     });
   }
@@ -428,6 +479,7 @@ Wiki结构：
         maxTurns: 20,
         systemPrompt,
         maxBudgetUsd: 10000.00,
+        pathToClaudeCodeExecutable: this.getOpenClaudeExecutablePath(),
         env: this.buildEnvConfig()
       }
     });
@@ -479,6 +531,7 @@ Wiki根目录：${this.wikiRoot}
         maxTurns: 35,
         systemPrompt,
         maxBudgetUsd: 10000.00,
+        pathToClaudeCodeExecutable: this.getOpenClaudeExecutablePath(),
         env: this.buildEnvConfig()
       }
     });

@@ -50,7 +50,16 @@ const PORT = process.env.PORT || 3001;
 // 中间件
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../../public')));
+// 静态文件服务 - 在容器中路径为 /app/public
+const publicPath = process.env.NODE_ENV === 'production'
+  ? '/app/public'
+  : path.join(__dirname, '../../public');
+
+app.use(express.static(publicPath, {
+  setHeaders: (res, path) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  }
+}));
 
 // 创建Wiki服务实例
 const wikiService = new WikiServiceV2();
@@ -209,7 +218,10 @@ app.post('/api/config', (req, res) => {
 
 // 默认路由 - 服务前端（捕获未匹配的请求）
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, '../../public/index.html'));
+  const indexPath = process.env.NODE_ENV === 'production'
+    ? '/app/public/index.html'
+    : path.join(__dirname, '../../public/index.html');
+  res.sendFile(indexPath);
 });
 
 // 创建HTTP服务器
