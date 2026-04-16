@@ -7,12 +7,9 @@ WORKDIR /app
 # 复制package.json和package-lock.json
 COPY server/package*.json ./server/
 
-# 安装服务器依赖
+# 安装服务器依赖（包括devDependencies用于构建）
 WORKDIR /app/server
-RUN npm ci --only=production
-
-# 全局安装OpenClaude CLI（确保在PATH中可用）
-RUN npm install -g @gitlawb/openclaude@0.3.0
+RUN npm ci
 
 # 复制服务器源代码
 COPY server/src ./src
@@ -50,13 +47,15 @@ RUN addgroup -g 1001 -S nodejs && \
     chown -R nodejs:nodejs /app
 
 # 从构建阶段复制node_modules和构建产物
-COPY --from=builder --chown=nodejs:nodejs /app/server/node_modules ./server/node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/server/dist ./server/dist
 COPY --from=builder --chown=nodejs:nodejs /app/public ./public
 COPY --from=builder --chown=nodejs:nodejs /app/wiki-data ./wiki-data
 
-# 复制package.json
-COPY --from=builder --chown=nodejs:nodejs /app/server/package.json ./server/
+# 复制package.json和package-lock.json
+COPY --from=builder --chown=nodejs:nodejs /app/server/package*.json ./server/
+
+# 安装生产依赖
+RUN cd /app/server && npm ci --only=production
 
 # 切换到非root用户
 USER nodejs

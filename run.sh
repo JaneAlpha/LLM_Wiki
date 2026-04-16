@@ -17,10 +17,16 @@ PROJECT_NAME="LLM Wiki"
 VERSION="1.0.0"
 DOCKER_COMPOSE_FILE="docker-compose.yml"
 ENV_FILE=".env"
+DOCKER_COMPOSE_CMD=""  # 将在check_docker_compose中设置
 
 # 检查docker-compose是否可用
 check_docker_compose() {
-    if ! command -v docker-compose &> /dev/null; then
+    # 检查 docker-compose（旧版）或 docker compose（新版）
+    if command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    elif docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    else
         echo -e "${RED}错误: docker-compose未安装${NC}"
         echo "请安装Docker Compose: https://docs.docker.com/compose/install/"
         exit 1
@@ -43,8 +49,8 @@ check_env_file() {
         fi
     fi
 
-    # 检查API密钥是否设置
-    if ! grep -q "ANTHROPIC_API_KEY=" "$ENV_FILE" || grep -q "ANTHROPIC_API_KEY=your_anthropic_api_key_here" "$ENV_FILE"; then
+    # 检查API密钥是否设置（忽略注释行）
+    if ! grep -v "^#" "$ENV_FILE" | grep -q "ANTHROPIC_API_KEY=" || grep -v "^#" "$ENV_FILE" | grep -q "ANTHROPIC_API_KEY=your_anthropic_api_key_here"; then
         echo -e "${RED}错误: 请编辑 $ENV_FILE 设置有效的 ANTHROPIC_API_KEY${NC}"
         exit 1
     fi
@@ -56,6 +62,23 @@ check_wiki_data() {
         echo -e "${YELLOW}创建wiki-data目录...${NC}"
         mkdir -p wiki-data/wiki wiki-data/raw
         echo -e "${GREEN}已创建wiki-data目录结构${NC}"
+    fi
+}
+
+# 检查Docker镜像是否存在
+check_docker_image() {
+    if ! $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" images | grep -q "llm-wiki"; then
+        echo -e "${YELLOW}警告: Docker镜像不存在${NC}"
+        echo -e "请先运行: ${BLUE}./run.sh build${NC} 构建镜像"
+        echo -e "或者按 Enter 自动构建（可能需要几分钟）..."
+        read -p "是否自动构建? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            build_service
+        else
+            echo -e "${RED}启动中止${NC}"
+            exit 1
+        fi
     fi
 }
 
@@ -74,8 +97,9 @@ start_service() {
     echo -e "${GREEN}启动 $PROJECT_NAME 服务...${NC}"
     check_env_file
     check_wiki_data
+    check_docker_image
 
-    docker-compose -f "$DOCKER_COMPOSE_FILE" up -d
+    $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" up -d
 
     echo -e "${GREEN}服务启动完成！${NC}"
     echo -e "访问地址: ${BLUE}http://localhost:3001${NC}"
@@ -85,36 +109,43 @@ start_service() {
 # 停止服务
 stop_service() {
     echo -e "${YELLOW}停止 $PROJECT_NAME 服务...${NC}"
-    docker-compose -f "$DOCKER_COMPOSE_FILE" down
+    $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" down
     echo -e "${GREEN}服务已停止${NC}"
 }
 
 # 重启服务
 restart_service() {
     echo -e "${YELLOW}重启 $PROJECT_NAME 服务...${NC}"
-    docker-compose -f "$DOCKER_COMPOSE_FILE" restart
-    echo -e "${GREEN}服务已重启${NC}"
+
+    # 检查容器是否在运行
+    if $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" ps --services --filter "status=running" | grep -q "llm-wiki"; then
+        $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" restart
+        echo -e "${GREEN}服务已重启${NC}"
+    else
+        echo -e "${YELLOW}容器未运行，改为启动服务...${NC}"
+        start_service
+    fi
 }
 
 # 查看状态
 status_service() {
     echo -e "${BLUE}$PROJECT_NAME 服务状态:${NC}"
-    docker-compose -f "$DOCKER_COMPOSE_FILE" ps
+    $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" ps
 
     echo -e "\n${BLUE}容器资源使用:${NC}"
-    docker stats --no-stream $(docker-compose -f "$DOCKER_COMPOSE_FILE" ps -q) 2>/dev/null || echo "无法获取资源使用信息"
+    docker stats --no-stream $($DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" ps -q) 2>/dev/null || echo "无法获取资源使用信息"
 }
 
 # 查看日志
 logs_service() {
     echo -e "${BLUE}查看 $PROJECT_NAME 日志:${NC}"
-    docker-compose -f "$DOCKER_COMPOSE_FILE" logs -f
+    $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" logs -f
 }
 
 # 构建镜像
 build_service() {
     echo -e "${GREEN}构建 $PROJECT_NAME Docker镜像...${NC}"
-    docker-compose -f "$DOCKER_COMPOSE_FILE" build --no-cache
+    $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" build
     echo -e "${GREEN}镜像构建完成${NC}"
 }
 
@@ -130,7 +161,7 @@ clean_service() {
     read -p "是否继续? (y/N): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        docker-compose -f "$DOCKER_COMPOSE_FILE" down -v
+        $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" down -v
         docker system prune -a -f
         echo -e "${GREEN}清理完成${NC}"
     else
@@ -149,10 +180,10 @@ update_service() {
     fi
 
     # 重建镜像
-    docker-compose -f "$DOCKER_COMPOSE_FILE" build --pull
+    $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" build --pull
 
     # 重启服务
-    docker-compose -f "$DOCKER_COMPOSE_FILE" up -d --force-recreate
+    $DOCKER_COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" up -d --force-recreate
 
     echo -e "${GREEN}更新完成${NC}"
 }
